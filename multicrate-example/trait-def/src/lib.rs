@@ -33,7 +33,7 @@ where
 
         // You can visit the fields generically using the `visit_fields` method.
         //  The types of the fields are provided to the visitor as actual concrete types plugged 
-        //  into the type system.
+        //  into the generic parameters.
         let DeriveShowVisitor { mut output, .. } = self.visit_fields(DeriveShowVisitor {
             output,
             indentation: indentation + 2,
