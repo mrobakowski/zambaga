@@ -11,3 +11,4 @@ enumflags2 = { version = "0.7.10", features = ["std"] }
 proc-macro2 = "1.0.88"
 quote = "1.0.37"
 syn = { version = "2.0.85", features = ["full"] } # TODO: bench and handwrite
+heck = "0.5"

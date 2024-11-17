@@ -1,5 +1,3 @@
-#![feature(const_type_id)]
-
 use std::{
     any::{Any, TypeId},
     fmt::Debug,
@@ -44,18 +42,19 @@ pub trait MakeDynTrait {
     type DynTrait<'a>: ?Sized;
     type IsTrait<'a, T: 'a>: ?Sized;
     type FieldVisitor;
+    const TRAIT_NAME: &'static str;
 }
 
+type ExtractorFn<MDT> =
+    fn(&dyn Any) -> Result<Option<&<MDT as MakeDynTrait>::DynTrait<'_>>, TypeError>;
+
 pub struct ImplExtractor<MDT: MakeDynTrait> {
-    pub extractor_fn: fn(&dyn Any) -> Result<Option<&MDT::DynTrait<'_>>, TypeError>,
+    pub extractor_fn: ExtractorFn<MDT>,
     pub has_impl: bool,
 }
 
 impl<MDT: MakeDynTrait> ImplExtractor<MDT> {
-    pub const fn new(
-        extractor_fn: fn(&dyn Any) -> Result<Option<&MDT::DynTrait<'_>>, TypeError>,
-        has_impl: bool,
-    ) -> Self {
+    pub const fn new(extractor_fn: ExtractorFn<MDT>, has_impl: bool) -> Self {
         Self {
             extractor_fn,
             has_impl,
@@ -94,7 +93,11 @@ impl Validation {
                     let (field_name, field_type, _, show_impl_extractor) = &fields[i];
                     i += 1;
                     if !show_impl_extractor.has_impl {
-                        return Validation::doesnt_implement(field_name, field_type);
+                        return Validation::doesnt_implement(
+                            field_name,
+                            field_type,
+                            MDT::TRAIT_NAME,
+                        );
                     }
                 }
             }
@@ -125,46 +128,60 @@ impl Validation {
         panic!("Validation failed")
     }
 
-    pub const fn doesnt_implement(field_name: &FieldName, field_type: &TypeName) -> Validation {
+    pub const fn doesnt_implement(
+        field_name: &FieldName,
+        field_type: &TypeName,
+        trait_name: &str,
+    ) -> Validation {
         const_panic::concat_panic!(const_panic::FmtArg::DISPLAY;
-            "\nField `", field_name.0, "` of type `", field_type.compiletime(), "` does not implement the trait\n"
+            "\nField `", field_name.0, "` of type `", field_type.compiletime(), "` does not implement `", trait_name, "`\n"
         )
     }
 }
 
-pub struct TypeIdBasedVisitor {
-    f: fn(&(), &mut ()),
-    expected_type_id: (TypeId, TypeId),
+pub struct FieldTraverser<MDT: MakeDynTrait> {
+    f: fn(&(), &mut <MDT as MakeDynTrait>::FieldVisitor),
+    expected_type_id: fn() -> TypeId,
 }
 
-impl TypeIdBasedVisitor {
-    pub const fn new<T: ?Sized + 'static, VisitTraitField: ?Sized + 'static>(
-        f: fn(&T, &mut VisitTraitField),
+impl<MDT> FieldTraverser<MDT>
+where
+    MDT: MakeDynTrait,
+{
+    pub const fn new<T: ?Sized + 'static>(
+        f: fn(&T, &mut <MDT as MakeDynTrait>::FieldVisitor),
     ) -> Self {
         Self {
-            f: unsafe { std::mem::transmute::<fn(&T, &mut VisitTraitField), fn(&(), &mut ())>(f) },
-            expected_type_id: (TypeId::of::<T>(), TypeId::of::<VisitTraitField>()),
+            f: unsafe {
+                std::mem::transmute::<
+                    fn(&T, &mut <MDT as MakeDynTrait>::FieldVisitor),
+                    fn(&(), &mut <MDT as MakeDynTrait>::FieldVisitor),
+                >(f)
+            },
+            expected_type_id: || TypeId::of::<T>(),
         }
     }
 
-    pub fn accept<T: ?Sized + 'static, FieldVisitor: ?Sized + 'static>(
+    pub fn accept<T: ?Sized + 'static>(
         &self,
-        field_visitor: &mut FieldVisitor,
+        field_visitor: &mut <MDT as MakeDynTrait>::FieldVisitor,
         this: &T,
     ) {
-        if self.expected_type_id != (TypeId::of::<T>(), TypeId::of::<FieldVisitor>()) {
+        if (self.expected_type_id)() != TypeId::of::<T>() {
             panic!("TypeId mismatch");
         }
-        (unsafe { std::mem::transmute::<fn(&(), &mut ()), fn(&T, &mut FieldVisitor)>(self.f) })(
-            this,
-            field_visitor,
-        );
+        (unsafe {
+            std::mem::transmute::<
+                fn(&(), &mut <MDT as MakeDynTrait>::FieldVisitor),
+                fn(&T, &mut <MDT as MakeDynTrait>::FieldVisitor),
+            >(self.f)
+        })(this, field_visitor);
     }
 }
 
 pub struct Mirror<MDT: MakeDynTrait + 'static> {
     pub name: TypeName,
-    pub field_visitor: TypeIdBasedVisitor,
+    pub field_traverser: FieldTraverser<MDT>,
     pub fields_or_variants: FieldsOrVariants<MDT>,
 }
 
@@ -223,11 +240,8 @@ pub trait WithMirror<MDT: MakeDynTrait + 'static>: Sized + 'static {
                 },
             )),
             FieldsOrVariants::Enum { variants } => OneOfThree::Three(variants.iter().map(
-                |(name, type_name, extractor, show_impl_extractor)| {
-                    todo!("this is wrong");
-                    let value = (extractor.extractor_fn)(self).unwrap();
-                    let value = (show_impl_extractor.extractor_fn)(value).unwrap();
-                    (Some(*name), *type_name, value)
+                |(_name, _type_name, _extractor, _show_impl_extractor)| {
+                    unimplemented!("this is wrong");
                 },
             )),
         }
