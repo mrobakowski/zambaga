@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 zambaga-macros = { path = "../macros" }
+const_panic = "0.2"

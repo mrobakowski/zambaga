@@ -126,9 +126,9 @@ impl Validation {
     }
 
     pub const fn doesnt_implement(field_name: &FieldName, field_type: &TypeName) -> Validation {
-        let field_name: &'static str = field_name.0;
-        let field_type: &'static str = field_type.compiletime();
-        panic!("Field `xxx` of type `ttt` does not implement the trait")
+        const_panic::concat_panic!(const_panic::FmtArg::DISPLAY;
+            "\nField `", field_name.0, "` of type `", field_type.compiletime(), "` does not implement the trait\n"
+        )
     }
 }
 

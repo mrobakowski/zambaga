@@ -107,7 +107,6 @@ pub mod test_traits {
 #[macro_export]
 macro_rules! ShowMacro {
     ($name:ident; $adt_name:ident; $i:item) => {
-        ::zambaga::macros::impl_adt!(recursive, dyn; $adt_name; $i);
         impl $crate::Show for $name {
             fn print(&self, indentation: usize) -> String {
                 let _ = <$name as DeriveShow>::VALIDATION;
@@ -126,7 +125,7 @@ impl<T> DeriveShow for T
 where
     T: WithMirror<MDTShow>,
 {
-    const VALIDATION: Validation = Validation::ok();
+    // const VALIDATION: Validation = Validation::ok();
 
     fn print(&self, indentation: usize) -> String {
         let mirror = T::MIRROR;
