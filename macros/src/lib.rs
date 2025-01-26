@@ -1,8 +1,8 @@
-mod mode;
-
 use proc_macro::TokenStream as PMTokenStream;
 use proc_macro2::{Ident, Span, TokenStream, TokenTree};
 use quote::{quote, ToTokens};
+
+mod mode;
 
 #[proc_macro_attribute]
 pub fn derive(_attr: PMTokenStream, item: PMTokenStream) -> PMTokenStream {
@@ -129,7 +129,7 @@ fn derive_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let res = quote! {
         #(#item)*
 
-        #trait_name! { @uses; 
+        #trait_name! { @uses;
             #trait_macro_invocation
             #with_mirror_impl
         }
@@ -181,7 +181,7 @@ fn reflect_impl(_attributes: TokenStream, item: TokenStream) -> TokenStream {
         pub(crate) use #impl_make_dyn_trait_macro_name;
     };
 
-    let is_struct = quote! {
+    let is_trait_struct = quote! {
         pub struct #is_trait_struct_name<'a, T>(pub &'a T);
 
         impl<'a, T> #is_trait_struct_name<'a, T> {
@@ -283,83 +283,117 @@ fn reflect_impl(_attributes: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    let forward_trait_items = input
-        .items
-        .iter()
-        .map(|item| match item.clone() {
-            syn::TraitItem::Const(syn::TraitItemConst {
-                attrs,
-                const_token,
-                ident,
-                generics,
-                colon_token,
-                ty,
-                ..
-            }) => syn::ImplItemConst {
-                attrs,
-                vis: syn::Visibility::Inherited,
-                defaultness: Default::default(),
-                const_token,
-                ident: ident.clone(),
-                generics,
-                colon_token,
-                ty,
-                eq_token: Default::default(),
-                expr: syn::parse2(quote! {
-                    <Self as #impl_module_name::#derive_trait_name>::#ident
-                })
-                .unwrap(),
-                semi_token: Default::default(),
-            }
-            .to_token_stream(),
-            syn::TraitItem::Fn(syn::TraitItemFn { attrs, sig, .. }) => {
-                let ident = sig.ident.clone();
-                let args = sig
-                    .inputs
-                    .iter()
-                    .map(|arg| match arg {
-                        syn::FnArg::Receiver(_) => quote! { self },
-                        syn::FnArg::Typed(pat_type) => pat_type.pat.to_token_stream(),
-                    })
-                    .collect::<Vec<_>>();
-
-                syn::ImplItemFn {
+    let make_forward_trait_items = |for_derivation| {
+        input
+            .items
+            .iter()
+            .map(|item| match item.clone() {
+                syn::TraitItem::Const(syn::TraitItemConst {
+                    attrs,
+                    const_token,
+                    ident,
+                    generics,
+                    colon_token,
+                    ty,
+                    ..
+                }) => syn::ImplItemConst {
                     attrs,
                     vis: syn::Visibility::Inherited,
                     defaultness: Default::default(),
-                    sig,
-                    block: syn::parse2(quote! {{
-                        <Self as #impl_module_name::#derive_trait_name>::#ident(#(#args),*)
-                    }})
+                    const_token,
+                    ident: ident.clone(),
+                    generics,
+                    colon_token,
+                    ty,
+                    eq_token: Default::default(),
+                    expr: syn::parse2(if for_derivation {
+                        quote! {
+                            derivation::#ident
+                        }
+                    } else {
+                        quote! {
+                            <Self as #impl_module_name::#derive_trait_name>::#ident
+                        }
+                    })
                     .unwrap(),
+                    semi_token: Default::default(),
                 }
-                .to_token_stream()
-            }
-            syn::TraitItem::Type(syn::TraitItemType {
-                attrs,
-                type_token,
-                ident,
-                generics,
-                semi_token,
-                ..
-            }) => syn::ImplItemType {
-                attrs,
-                vis: syn::Visibility::Inherited,
-                defaultness: Default::default(),
-                type_token,
-                ident: ident.clone(),
-                generics,
-                eq_token: Default::default(),
-                ty: syn::parse2(quote! {
-                    <Self as #impl_module_name::#derive_trait_name>::#ident
-                })
-                .unwrap(),
-                semi_token,
-            }
-            .to_token_stream(),
-            _ => unimplemented!(),
-        })
-        .collect::<Vec<_>>();
+                .to_token_stream(),
+                syn::TraitItem::Fn(syn::TraitItemFn { attrs, sig, .. }) => {
+                    let ident = sig.ident.clone();
+                    let args = sig
+                        .inputs
+                        .iter()
+                        .map(|arg| match arg {
+                            syn::FnArg::Receiver(_) => quote! { self },
+                            syn::FnArg::Typed(pat_type) => {
+                                // TODO: convert pattern to an expression properly
+                                // * strip mut
+                                // * handle ref
+                                pat_type.pat.to_token_stream()
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    syn::ImplItemFn {
+                        attrs,
+                        vis: syn::Visibility::Inherited,
+                        defaultness: Default::default(),
+                        sig,
+                        block: syn::parse2(if for_derivation {
+                            quote! {{
+                                derivation::#ident(#(#args),*)
+                            }}
+                        } else {
+                            quote! {{
+                                <Self as #impl_module_name::#derive_trait_name>::#ident(#(#args),*)
+                            }}
+                        })
+                        .inspect_err(|e| {
+                            eprintln!("hello????? here {}", e);
+                        })
+                        .unwrap(),
+                    }
+                    .to_token_stream()
+                }
+                syn::TraitItem::Type(syn::TraitItemType {
+                    attrs,
+                    type_token,
+                    ident,
+                    generics,
+                    semi_token,
+                    ..
+                }) => syn::ImplItemType {
+                    attrs,
+                    vis: syn::Visibility::Inherited,
+                    defaultness: Default::default(),
+                    type_token,
+                    ident: ident.clone(),
+                    generics,
+                    eq_token: Default::default(),
+                    ty: syn::parse2(if for_derivation {
+                        quote! {{
+                            derivation::#ident
+                        }}
+                    } else {
+                        quote! {
+                            <Self as #impl_module_name::#derive_trait_name>::#ident
+                        }
+                    })
+                    .inspect_err(|e| {
+                        eprintln!("hello????? {}", e);
+                    })
+                    .unwrap(),
+                    semi_token,
+                }
+                .to_token_stream(),
+                _ => unimplemented!(),
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let forward_trait_items = make_forward_trait_items(false);
+    let forward_trait_items_for_derivation_syntax = make_forward_trait_items(true);
 
     let impl_trait_macro = quote! {
         #[macro_export]
@@ -374,6 +408,17 @@ fn reflect_impl(_attributes: TokenStream, item: TokenStream) -> TokenStream {
 
             (@MDT) => {
                 #impl_module_name::#mdt_struct_name
+            };
+
+            (@blanket_impl $derivation:path; $validation:expr) => {
+                const _: () = {
+                    use $derivation as derivation;
+                    impl<T> #derive_trait_name for T
+                    where T: ::zambaga::WithMirror<#trait_name!(@MDT)> {
+                        const VALIDATION: ::zambaga::Validation = $validation;
+                        #(#forward_trait_items_for_derivation_syntax)*
+                    }
+                };
             };
 
             { @uses; $($i:item)* } => {
@@ -393,8 +438,9 @@ fn reflect_impl(_attributes: TokenStream, item: TokenStream) -> TokenStream {
         pub mod #impl_module_name {
             use super::*;
             use ::zambaga::*;
+            use ::std::any::Any;
             #mdt
-            #is_struct
+            #is_trait_struct
             #visit_field_trait
             #derive_trait
             #impl_trait_macro
@@ -409,4 +455,31 @@ fn reflect_impl(_attributes: TokenStream, item: TokenStream) -> TokenStream {
     // println!("{}", res);
 
     res
+}
+
+#[proc_macro_attribute]
+pub fn derivation(trait_name: PMTokenStream, item: PMTokenStream) -> PMTokenStream {
+    derivation_impl(trait_name.into(), item.into()).into()
+}
+
+fn derivation_impl(trait_name: TokenStream, item: TokenStream) -> TokenStream {
+    let input: syn::ItemMod = syn::parse2(item.clone()).unwrap();
+    let derivation_name = input.ident.clone();
+    let trait_name_snake_case = heck::AsSnakeCase(trait_name.to_string());
+
+    let has_visit_any_method = false; // TODO
+    let validation = if has_visit_any_method {
+        quote! { ::zambaga::Validation::ok() }
+    } else {
+        quote! { ::zambaga::Validation::all_fields_impl(&Self::MIRROR) }
+    };
+
+    let derivation = quote! {
+        #trait_name!(@blanket_impl #derivation_name; #validation);
+    };
+
+    quote! {
+        #item
+        #derivation
+    }
 }

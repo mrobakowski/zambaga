@@ -2,7 +2,10 @@ use std::{
     any::{Any, TypeId},
     fmt::Debug,
 };
-pub use zambaga_macros as macros;
+
+pub mod macros {
+    pub use zambaga_macros::*;
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct FieldName(pub &'static str);
